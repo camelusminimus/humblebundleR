@@ -1,0 +1,132 @@
+---
+title: "2022-08-17--Connecting-to-Humblebundle"
+author: "Jan F. Kraemer"
+date: "8/17/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse);
+library(here)
+library(config)
+library(chk)
+library(rvest)
+library(polite)
+library(jsonlite);
+library(glue);
+
+
+
+
+config_file <- Sys.getenv("R_CONFIG_FILE", here::here("config.yml"))
+Sys.setenv(R_CONFIG_FILE=config_file)
+
+chk::chk_not_null(config::get(value = "credentials"))
+
+polite_crawler_email <- config::get(value = "crawlermail");
+
+polite_user_agent <- glue_safe("experimental_owned_keys_crawler: {polite_crawler_email}");
+
+humble_bow <-
+  bow(
+    url="https://www.humblebundle.com/home/purchases",
+    user_agent=polite_user_agent,
+#    force=TRUE,
+    config=httr::config(cookie=paste0('_simpleauth_sess=', config::get(value="credentials"))))
+  
+  
+
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r download_purchases}
+
+humble_purchases_page <-
+  scrape(
+    humble_bow,
+    accept="html",
+    content="text/html; charset=UTF-8")
+
+
+humble_user_json <- 
+  humble_purchases_page |>
+  html_element(xpath = '//*/script[@id="user-home-json-data"]') |>
+  html_text()
+
+humble_user_data <-
+  humble_user_json |>
+  jsonlite::fromJSON()
+
+humble_user_gamekeys <- 
+  tibble(order_id=humble_user_data$gamekeys) |>
+  mutate(url=glue_safe("https://www.humblebundle.com/api/v1/order/{order_id}")) #?all_tpkds=true the query is important, otherwise it will not show the 
+
+```
+
+
+```{r download_sample_order}
+
+# humble_sample_order_nod <-
+#   humble_user_gamekeys |>
+#   slice_sample(n=1) |>
+#   pull(url) |>
+#   (\(url) nod(bow=humble_bow, path=url))() |>
+#   scrape(content='application/json', query = list(all_tpkds='true'))
+
+humble_sample_order_id <- config::get(value = "keys_sample_order");
+
+humble_sample_order_nod <-
+  glue_safe("https://www.humblebundle.com/api/v1/order/{humble_sample_order_id}") |>
+  (\(url) nod(bow=humble_bow, path=url))() |>
+  scrape(content='application/json', query = list(all_tpkds='true'))
+
+humble_order_keys_list <-
+  humble_sample_order_nod |>
+  pluck('tpkd_dict', 'all_tpks')
+
+humble_order_keys_list_field_names <-
+  humble_order_keys_list |>
+  map(names) |>
+  reduce(union)
+
+humble_order_keys <-
+  humble_order_keys_list |>
+  transpose(.names=humble_order_keys_list_field_names) |> 
+  simplify_all() |>
+  as_tibble()
+
+fixed_up_tibble <-
+  humble_order_keys |>
+  select_if(~ !every(.x, is.null)) |>
+  select_if(~ !every(.x, is.list)) |>
+  modify_if(
+            ~ every(.x, 
+                   ~ is.null(.x) || is_logical(.x)), 
+            ~ map_lgl(.x, 
+                      ~ if_else(
+                          is.null(.x), 
+                          as.logical(NA_integer_),
+                          .x))) |>
+  modify_if(
+            ~ every(.x, 
+                   ~ is.null(.x) || is.numeric(.x)), 
+            ~ map_dbl(.x, 
+                      ~ if_else(
+                          is.null(.x), 
+                          NA_real_,
+                          as.double(.x)))) |>
+  modify_if(
+            ~ every(.x, 
+                   ~ is.null(.x) || is.character(.x)), 
+            ~ map_chr(.x, 
+                      ~ ifelse(
+                          is.null(.x), 
+                          NA_character_,
+                          paste0("", as.character(.x))))) 
+  
+```
+
+
+
