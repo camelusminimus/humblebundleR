@@ -1,0 +1,7 @@
+#Copy this as config.yml and edit
+default:
+  credentials: "copy contents of the humble bundle cookie _simpleauth_sess"
+#  crawlermail: "add email if you are polite"
+  keys_sample_order: "add a humble id where there would be keys"
+  products_sample_order: "add a humble id where there would be products (ebooks and such)"
+  choice_sample_order: "add a humble id that belongs to a humble choice/subscription order"
