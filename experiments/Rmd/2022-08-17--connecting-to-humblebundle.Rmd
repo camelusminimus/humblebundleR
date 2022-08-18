@@ -14,6 +14,7 @@ library(rvest)
 library(polite)
 library(jsonlite);
 library(glue);
+library(progress);
 
 
 
@@ -23,6 +24,13 @@ Sys.setenv(R_CONFIG_FILE=config_file)
 
 chk::chk_not_null(config::get(value = "credentials"))
 
+
+
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup_bow, eval=FALSE}
 polite_crawler_email <- config::get(value = "crawlermail");
 
 polite_user_agent <- glue_safe("experimental_owned_keys_crawler: {polite_crawler_email}");
@@ -33,15 +41,11 @@ humble_bow <-
     user_agent=polite_user_agent,
 #    force=TRUE,
     config=httr::config(cookie=paste0('_simpleauth_sess=', config::get(value="credentials"))))
+```  
   
-  
 
 
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-
-```{r download_purchases}
+```{r download_purchases, eval=FALSE}
 
 humble_purchases_page <-
   scrape(
@@ -66,7 +70,7 @@ humble_user_gamekeys <-
 ```
 
 
-```{r download_sample_order}
+```{r download_key_sample_order, eval=FALSE}
 
 # humble_sample_order_nod <-
 #   humble_user_gamekeys |>
@@ -76,6 +80,7 @@ humble_user_gamekeys <-
 #   scrape(content='application/json', query = list(all_tpkds='true'))
 
 humble_sample_order_id <- config::get(value = "keys_sample_order");
+chk_not_empty(humble_sample_order_id);
 
 humble_sample_order_nod <-
   glue_safe("https://www.humblebundle.com/api/v1/order/{humble_sample_order_id}") |>
@@ -86,47 +91,545 @@ humble_order_keys_list <-
   humble_sample_order_nod |>
   pluck('tpkd_dict', 'all_tpks')
 
-humble_order_keys_list_field_names <-
-  humble_order_keys_list |>
-  map(names) |>
-  reduce(union)
 
-humble_order_keys <-
-  humble_order_keys_list |>
-  transpose(.names=humble_order_keys_list_field_names) |> 
-  simplify_all() |>
-  as_tibble()
+transform_key_data <- function(order_key_data_list) {
 
-fixed_up_tibble <-
-  humble_order_keys |>
-  select_if(~ !every(.x, is.null)) |>
-  select_if(~ !every(.x, is.list)) |>
-  modify_if(
-            ~ every(.x, 
-                   ~ is.null(.x) || is_logical(.x)), 
-            ~ map_lgl(.x, 
-                      ~ if_else(
-                          is.null(.x), 
-                          as.logical(NA_integer_),
-                          .x))) |>
-  modify_if(
-            ~ every(.x, 
-                   ~ is.null(.x) || is.numeric(.x)), 
-            ~ map_dbl(.x, 
-                      ~ if_else(
-                          is.null(.x), 
-                          NA_real_,
-                          as.double(.x)))) |>
-  modify_if(
-            ~ every(.x, 
-                   ~ is.null(.x) || is.character(.x)), 
-            ~ map_chr(.x, 
-                      ~ ifelse(
-                          is.null(.x), 
-                          NA_character_,
-                          paste0("", as.character(.x))))) 
+  order_key_tibble <-
+      order_key_data_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row()
+}
+
+oder_keys_tibble <-
+  map_dfr(humble_sample_order_nod |>
+          pluck('tpkd_dict', 'all_tpks', .default=list(machine_name='_unknown_'),
+          transform_key_data);
+
+# humble_order_keys_list_field_names <-
+#   humble_order_keys_list |>
+#   map(names) |>
+#   reduce(union)
+# 
+# humble_order_keys <-
+#   humble_order_keys_list |>
+#   transpose(.names=humble_order_keys_list_field_names) |> 
+#   simplify_all() |>
+#   as_tibble()
+# 
+# fixed_up_tibble <-
+#   humble_order_keys |>
+#   select_if(~ !every(.x, is.null)) |>
+#   select_if(~ !every(.x, is.list)) |>
+#   modify_if(
+#             ~ every(.x, 
+#                    ~ is.null(.x) || is_logical(.x)), 
+#             ~ map_lgl(.x, 
+#                       ~ if_else(
+#                           is.null(.x), 
+#                           as.logical(NA_integer_),
+#                           .x))) |>
+#   modify_if(
+#             ~ every(.x, 
+#                    ~ is.null(.x) || is.numeric(.x)), 
+#             ~ map_dbl(.x, 
+#                       ~ if_else(
+#                           is.null(.x), 
+#                           NA_real_,
+#                           as.double(.x)))) |>
+#   modify_if(
+#             ~ every(.x, 
+#                    ~ is.null(.x) || is.character(.x)), 
+#             ~ map_chr(.x, 
+#                       ~ ifelse(
+#                           is.null(.x), 
+#                           NA_character_,
+#                           paste0("", as.character(.x))))) 
   
+```
+
+```{r download_product_sample_order, eval=FALSE}
+humble_sample_order_id <- config::get(value = "products_sample_order");
+chk_not_empty(humble_sample_order_id);
+
+humble_sample_order_nod <-
+  glue_safe("https://www.humblebundle.com/api/v1/order/{humble_sample_order_id}") |>
+  (\(url) nod(bow=humble_bow, path=url))() |>
+  scrape(content='application/json', query = list(all_tpkds='true'))
+
+
+transform_download_file <- function(subproduct_download_file_list) {
+  download_file_tibble <-
+    bind_cols(
+      subproduct_download_file_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      subproduct_download_file_list |>
+        pluck('url', .default=list(error='_unknown_')) |>
+        as_tibble_row() |>
+        rename_all(.funs= ~ str_c('url_', .)))
+}
+
+transform_subproduct_download <- function(subproduct_download_item_list) {
+  download_tibble <-
+    bind_cols(
+      subproduct_download_item_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      tibble(options=list(
+               subproduct_download_item_list |>
+                pluck('options_dict') |>
+                compact() |>
+                as_tibble())),
+      tibble(
+        files=list(map_dfr(subproduct_download_item_list |>
+                             pluck('download_struct'),
+                           transform_download_file))))
+}
+
+transform_subproduct_item <- function(subproduct_item_list) {
+  subproduct_tibble <-
+    bind_cols(
+      subproduct_item_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      subproduct_item_list|>
+        pluck('payee', .default=list(machine_name='_unknown_')) |>
+        as_tibble_row() |>
+        rename_all(.funs= ~ str_c('payee_', .)),
+      tibble(
+        downloads=list(map_dfr(subproduct_item_list |> 
+                             pluck('downloads'),
+                            transform_subproduct_item))))
+  
+  
+}
+
+transform_order <- function(order_list) {
+  order_tibble <- 
+    bind_cols(
+      order_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      order_list |>
+        pluck('product', .default=list(category='empty product')) |>
+        compact() |>
+        as_tibble_row(),
+      tibble(
+        subproducts=list(map_dfr(order_list |> 
+                             pluck('subproducts'),
+                            transform_subproduct_item))))
+}
+
+
+
+
+```
+
+```{r download_choice_sample_order, eval=FALSE}
+humble_sample_order_id <- config::get(value = "choice_sample_order");
+chk_not_empty(humble_sample_order_id);
+
+humble_sample_order_nod <-
+  glue_safe("https://www.humblebundle.com/api/v1/order/{humble_sample_order_id}") |>
+  (\(url) nod(bow=humble_bow, path=url))() |>
+  scrape(content='application/json', query = list(all_tpkds='true'))
+
+if (humble_sample_order_nod$product$category == 'subscriptioncontent') {
+  humble_choice_url_suffix <- humble_sample_order_nod$product$choice_url
+  chk_not_empty(humble_choice_url_suffix);
+
+  humble_choice_page <-
+    glue_safe("https://www.humblebundle.com/membership/{humble_choice_url_suffix}") |>
+    (\(url) nod(bow=humble_bow, path=url))() |>
+    scrape(
+      accept="html",
+      content="text/html; charset=UTF-8")
+  
+  humble_choice_json <- 
+    humble_choice_page |>
+    html_element(xpath = '//*/script[@id="webpack-monthly-product-data"]') |>
+    html_text()
+  
+  humble_choice_data <-
+    humble_choice_json |>
+    jsonlite::fromJSON()  
+  
+  
+  humble_choice_options <-
+    humble_choice_data |>
+      pluck('contentChoiceOptions')
+    
+  
+  transform_choice_game <- function(choice_game_list) {
+    relevant_game_elements <-
+      c("delivery_methods",
+        "description",
+        "title",
+        "image",
+        "display_item_machine_name",
+        "tpkds")
+
+    relevant_items <-
+      choice_game_list[relevant_game_elements]
+    
+    
+    choice_game_tibble <-
+      bind_cols(
+        relevant_items|>
+          compact()|>
+          discard(\(element) length(element) > 1) |>
+          as_tibble_row(),      
+        tibble(
+          keys=list(
+                relevant_items |>
+                  pluck('tpkds', .default=list(error='_unknown_')) |>
+                  as_tibble())),
+        choice_game_list |>
+          pluck('platforms', .default='unknown') |>
+           (function (platform_names) {
+             name_vec <- paste0('platform_', platform_names);
+             values <- rep_len(TRUE, length(name_vec)) |> as.list();
+             names(values) <- name_vec;
+             as_tibble(values)})())
+  }
+  
+  
+  
+  humble_choice_tibble <-
+    bind_cols(
+      humble_choice_options |>
+        discard(is.list) |>
+        discard(\(element) length(element) > 1) |>
+        compact()|>
+        as_tibble_row(),
+      tibble(
+        choices=list(map_dfr(humble_choice_options |> 
+                             pluck('contentChoiceData', 'game_data'),
+                            transform_choice_game))))      
+}
+
+
+
+
 ```
 
 
 
+```{r crawl_orders}
+
+transform_download_file <- function(subproduct_download_file_list) {
+  download_file_tibble <-
+    bind_cols(
+      subproduct_download_file_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      subproduct_download_file_list |>
+        pluck('url', .default=list(error='_unknown_')) |>
+        as_tibble_row() |>
+        rename_all(.funs= ~ str_c('url_', .)))
+}
+
+transform_subproduct_download <- function(subproduct_download_item_list) {
+  download_tibble <-
+    bind_cols(
+      subproduct_download_item_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      tibble(options=list(
+               subproduct_download_item_list |>
+                pluck('options_dict') |>
+                compact() |>
+                as_tibble())),
+      tibble(
+        files=list(map_dfr(subproduct_download_item_list |>
+                             pluck('download_struct'),
+                           transform_download_file))))
+}
+
+transform_subproduct_item <- function(subproduct_item_list) {
+  subproduct_tibble <-
+    bind_cols(
+      subproduct_item_list |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      subproduct_item_list|>
+        pluck('payee', .default=list(machine_name='_unknown_')) |>
+        as_tibble_row() |>
+        rename_all(.funs= ~ str_c('payee_', .)),
+      tibble(
+        downloads=list(map_dfr(subproduct_item_list |> 
+                             pluck('downloads'),
+                            transform_subproduct_item))))
+  
+  
+}
+
+transform_key_data <- function(order_key_data_list) {
+
+  clean_order_key_data_list <-
+    order_key_data_list |>
+    discard(is.list) |>
+    compact();
+  
+  chk_not_null(names(clean_order_key_data_list));
+
+  order_key_tibble <-
+      clean_order_key_data_list |>
+      as_tibble_row()
+}
+
+
+
+retrieve_choice_data <- function(humble_choice_url_suffix, humble_bow) {
+  humble_choice_page <-
+    glue_safe("https://www.humblebundle.com/membership/{humble_choice_url_suffix}") |>
+    (\(url) nod(bow=humble_bow, path=url))() |>
+    scrape(
+      accept="html",
+      content="text/html; charset=UTF-8")
+  
+  humble_choice_json <- 
+    humble_choice_page |>
+    html_element(xpath = '//*/script[@id="webpack-monthly-product-data"]') |>
+    html_text()
+  
+  humble_choice_data <-
+    humble_choice_json |>
+    jsonlite::fromJSON()  
+  
+  
+  humble_choice_options <-
+    humble_choice_data |>
+      pluck('contentChoiceOptions')
+    
+  
+  transform_choice_game <- function(choice_game_list) {
+    relevant_game_elements <-
+      c("delivery_methods",
+        "description",
+        "title",
+        "image",
+        "display_item_machine_name",
+        "tpkds")
+
+    relevant_items <-
+      choice_game_list[relevant_game_elements]
+    
+    
+    choice_game_tibble <-
+      bind_cols(
+        relevant_items|>
+          compact()|>
+          discard(\(element) length(element) > 1) |>
+          as_tibble_row(),      
+        tibble(
+          keys=list(
+                relevant_items |>
+                  pluck('tpkds', .default=list(error='_unknown_')) |>
+                  as_tibble())),
+        choice_game_list |>
+          pluck('platforms', .default='unknown') |>
+           (function (platform_names) {
+             name_vec <- paste0('platform_', platform_names);
+             values <- rep_len(TRUE, length(name_vec)) |> as.list();
+             names(values) <- name_vec;
+             as_tibble(values)})())
+  }
+  
+  
+  
+  humble_choice_tibble <-
+    bind_cols(
+      humble_choice_options |>
+        discard(is.list) |>
+        discard(\(element) length(element) > 1) |>
+        compact()|>
+        as_tibble_row(),
+      tibble(
+        choices=list(map_dfr(humble_choice_options |> 
+                             pluck('contentChoiceData', 'game_data'),
+                            transform_choice_game))))  
+}
+
+
+
+retrieve_order_data <- function(order_suffix, humble_bow, p_bar=NULL) {
+  chk_not_empty(order_suffix);
+  print(order_suffix)
+  
+  humble_order_data <-
+    glue_safe("https://www.humblebundle.com/api/v1/order/{order_suffix}") |>
+    (\(url) nod(bow=humble_bow, path=url))() |>
+    scrape(content='application/json', query = list(all_tpkds='true'))  
+  
+
+  order_tibble <- 
+    bind_cols(
+      humble_order_data |>
+        discard(is.list) |>
+        compact()|>
+        as_tibble_row(),
+      humble_order_data |>
+        pluck('product', .default=list(category='empty product')) |>
+        compact() |>
+        discard(is.list) |> #empty_tpkds could be included if humble ran out of keys
+        as_tibble_row(),
+      tibble(
+        subproducts=list(map_dfr(humble_order_data |> 
+                             pluck('subproducts'),
+                            transform_subproduct_item))),
+      tibble(
+        keys=list(map_dfr(humble_order_data |>
+                            pluck('tpkd_dict', 'all_tpks', .default=list(list(machine_name='_unknown_'))),
+                          transform_key_data))))
+  
+  if (order_tibble$category[1] == 'subscriptioncontent' &&
+      !is.null(pluck(order_tibble, 'choice_url'))) {
+    humble_choice_url_suffix <- order_tibble$choice_url[1];
+    chk_not_empty(humble_choice_url_suffix);    
+    
+    order_tibble <-
+      bind_cols(
+        order_tibble,
+        tibble(choice_data=list(retrieve_choice_data( humble_choice_url_suffix, humble_bow))))
+  }
+  
+  if (!is.null(p_bar)) {
+    p_bar$tick();
+  }
+  
+  order_tibble
+}
+
+retrieve_humble_data <- function(humble_url, humble_credentials) {
+
+  polite_crawler_email <- config::get(value = "crawlermail");
+  if (is.null(polite_crawler_email)) {
+    polite_user_agent <- glue_safe("experimental_owned_keys_crawler");
+  }else {
+    polite_user_agent <- glue_safe("experimental_owned_keys_crawler: {polite_crawler_email}");
+  }
+    
+  
+  humble_bow <-
+    bow(
+      url=humble_url,
+      user_agent=polite_user_agent,
+      delay=1,
+  #    force=TRUE,
+      config=httr::config(cookie=paste0('_simpleauth_sess=', humble_credentials)))  
+  
+  humble_purchases_page <-
+    scrape(
+      humble_bow,
+      accept="html",
+      content="text/html; charset=UTF-8")
+  
+  
+  humble_user_json <- 
+    humble_purchases_page |>
+    html_element(xpath = '//*/script[@id="user-home-json-data"]') |>
+    html_text()
+  
+  humble_user_data <-
+    humble_user_json |>
+    jsonlite::fromJSON()
+  
+  p_bar <- progress_bar$new(
+    format = "  Loading Humble Data [:bar] in :elapsed. eta: :eta",
+    total = length(humble_user_data$gamekeys),
+    clear = FALSE, width= 60)
+  p_bar$tick(0);
+  
+  humble_user_gamekeys <- 
+    map_df(humble_user_data |>
+            pluck('gamekeys') |>
+            as.list(),
+           retrieve_order_data, humble_bow, p_bar)
+
+}
+
+humble_credentials <- config::get(value = "credentials");
+chk::chk_not_null(humble_credentials)
+humble_url <- "https://www.humblebundle.com/home/purchases";
+
+
+humble_data <- retrieve_humble_data(humble_url, humble_credentials);
+
+saveRDS(humble_data, file=here::here("experiments", "data", "humble_data_complete.Rds"))
+
+```
+
+
+```{r retrieve_keys}
+if (!exists('humble_data')) {
+  humble_data <- readRDS(file=here::here("experiments", "data", "humble_data_complete.Rds"))
+}
+
+choice_keys <-
+  humble_data |>
+  select(source_key=gamekey, choice_data) |>
+  filter(!map_lgl(choice_data, is.null)) |>
+  unnest(choice_data) |>
+  select(source_key, choices) |> 
+  unnest(choices) |>
+  unnest(keys) |>
+  mutate(key_type=delivery_methods) |>
+  select(source_key, gamekey, redeemed_key_val, key_type, steam_app_id, everything())
+
+available_choice_keys <-
+  choice_keys |>
+  filter(is.na(redeemed_key_val))
+
+
+raw_bundle_keys <-
+  humble_data |>
+  select(source_key=gamekey, keys) |>
+  filter(!map_lgl(keys, is.null)) |>
+  unnest(keys) |>
+  select(source_key, gamekey, redeemed_key_val, key_type, steam_app_id, everything())
+
+invalid_keys <-
+  raw_bundle_keys |>
+  filter(is.na(gamekey));
+
+bundle_keys <-
+  raw_bundle_keys |>
+  filter(!is.na(gamekey))
+
+all_keys <- bind_rows(bundle_keys, choice_keys);
+
+available_steam_keys <-
+  all_keys |>
+  filter(is.na(redeemed_key_val)) |>
+  filter(!is.na(steam_app_id)) |>
+  group_by(steam_app_id) |>
+  summarize(game_title=first(human_name),
+            source_key=first(source_key),
+            key_count=length(unique(gamekey))) |>
+  mutate(steam_url=paste0('http://store.steampowered.com/app/', steam_app_id),
+         humble_order_url=paste0('https://www.humblebundle.com/downloads?key=', source_key)) |>
+  select(key_count, game_title, steam_url, humble_order_url, steam_app_id) |>
+  arrange(desc(key_count), game_title)
+  
+
+write_csv(available_steam_keys, file=here::here("experiments", "data", "humble_available_keys.csv"))
+
+available_steam_keys_excel <-
+  available_steam_keys |>
+  mutate(steam_url=paste0('=HYPERLINK("', steam_url, '"; "STEAM SHOP")'))
+
+write_excel_csv2(available_steam_keys_excel, file=here::here("experiments", "data", "humble_available_keys_excel.csv"))
+
+         
+
+
+```
