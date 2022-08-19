@@ -15,6 +15,8 @@ library(polite)
 library(jsonlite);
 library(glue);
 library(progress);
+library(httr);
+library(fs);
 
 
 
@@ -321,6 +323,30 @@ if (humble_sample_order_nod$product$category == 'subscriptioncontent') {
 
 
 ```{r crawl_orders}
+parse_web_url <- function(web_url) {
+  valid_extentions <- c(
+    "7z", "air", "apk", "bin", "bz2", "cbr", 
+    "cbz", "deb", "dmg", "epub", "exe", "gmz",
+    "gz", "mobi", "mov", "mp4", "msi", "pdf", 
+    "pkg", "prc", "rar", "rpm", "run", "sh", 
+    "smod", "tar", "tgz", "txt", "xz", "zip")
+  
+  if (is.null(web_url) || is.na(web_url)) {
+    parsed_url_tibble <- tibble(url_filename=NA_character_, url_filename_extention=NA_character_)
+  } else {
+    segmented_url <- parse_url(web_url);
+    
+    url_filename <- path_file(segmented_url$path)
+    url_filename_extention <- path_ext(segmented_url$path)
+    if (!tolower(url_filename_extention) %in% valid_extentions) {
+      url_filename_extention = NA_character_
+    }
+    
+    parsed_url_tibble <- tibble(url_filename=url_filename, url_filename_extention=url_filename_extention)
+  }
+  
+  parsed_url_tibble
+}
 
 transform_download_file <- function(subproduct_download_file_list) {
   download_file_tibble <-
@@ -332,7 +358,27 @@ transform_download_file <- function(subproduct_download_file_list) {
       subproduct_download_file_list |>
         pluck('url', .default=list(error='_unknown_')) |>
         as_tibble_row() |>
-        rename_all(.funs= ~ str_c('url_', .)))
+        rename_all(.funs= ~ str_c('url_', .)))  
+  
+  if (has_name(download_file_tibble, 'url_web')) {
+    download_file_tibble <-
+      bind_cols(
+        download_file_tibble,
+        parse_web_url(download_file_tibble$url_web))
+  }
+
+
+  download_file_tibble |>
+    transmute_all(as.character) |>
+    type_convert(col_types=
+                   cols(.default=col_character(),
+                        uploaded_at=col_datetime(),
+                        file_size=col_integer(),
+                        build_version=col_character(),
+                        timestamp=col_integer(),
+                        small=col_logical(),
+                        uses_kindle_sender=col_logical(),
+                        `kindle-friendly`=col_logical()))
 }
 
 transform_subproduct_download <- function(subproduct_download_item_list) {
@@ -341,12 +387,7 @@ transform_subproduct_download <- function(subproduct_download_item_list) {
       subproduct_download_item_list |>
         discard(is.list) |>
         compact()|>
-        as_tibble_row(),
-      tibble(options=list(
-               subproduct_download_item_list |>
-                pluck('options_dict') |>
-                compact() |>
-                as_tibble())),
+        as_tibble_row() ,
       tibble(
         files=list(map_dfr(subproduct_download_item_list |>
                              pluck('download_struct'),
@@ -367,7 +408,7 @@ transform_subproduct_item <- function(subproduct_item_list) {
       tibble(
         downloads=list(map_dfr(subproduct_item_list |> 
                              pluck('downloads'),
-                            transform_subproduct_item))))
+                            transform_subproduct_download))))
   
   
 }
