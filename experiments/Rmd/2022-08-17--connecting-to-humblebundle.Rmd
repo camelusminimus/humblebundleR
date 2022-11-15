@@ -674,3 +674,42 @@ write_excel_csv2(available_steam_keys_excel, file=here::here("experiments", "dat
 
 
 ```
+
+
+
+```{r retrieve_ebooks}
+if (!exists('humble_data')) {
+  humble_data <- readRDS(file=here::here("experiments", "data", "humble_data_complete.Rds"))
+}
+
+humble_products <-
+  humble_data |>
+  select(gamekey, subproducts) |>
+  filter(!map_lgl(subproducts, is.null)) |>
+  unnest(subproducts)
+
+
+
+
+ebook_products <-
+  humble_products |>
+  select(gamekey, human_name, downloads) |>
+  filter(!map_lgl(downloads, is.null)) |>
+  unnest(downloads) |>
+  select(gamekey, human_name, machine_name, platform, download_version_number, files) |>
+  filter(platform == 'ebook') |>
+  unnest(files) 
+  
+
+doublette_ebook_products <-
+  ebook_products |>
+  count(sha1, md5) |>
+  filter(n > 1) |>
+  arrange(desc(n))
+
+
+
+
+```
+
+
